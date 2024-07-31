@@ -1,5 +1,5 @@
-import {initial, Line, LineProps, makeScene2D, Rect, RectProps, signal, Txt, View2D} from '@motion-canvas/2d';
-import {all, createRefArray, noop, Origin, Random, SignalValue, SimpleSignal, ThreadGenerator, useRandom, waitFor} from '@motion-canvas/core';
+import {initial, Line, LineProps, makeScene2D, Node, NodeProps, Rect, RectProps, signal, Txt, View2D} from '@motion-canvas/2d';
+import {all, createRef, createRefArray, easeInCubic, easeInOutCubic, noop, Origin, Random, SignalValue, SimpleSignal, ThreadGenerator, TimingFunction, tween, useRandom, useScene, waitFor} from '@motion-canvas/core';
 import chroma from 'chroma-js';
 
 const BAR_NUM = 10;
@@ -11,20 +11,24 @@ const HUE_RANGE = 300; // NOTE: to rotate hues the other way flip the sign
 const HUE_START = 30;
 const PAIRS_BEFORE_BULK = 5;
 const LAYER_OFFSET = BAR_WIDTH / 2;
+const SEARCH_RANGE_HEIGHT = 40;
 
 const BAR_HUE_INCREASE = HUE_RANGE / BAR_NUM;
 
 const SEPARATE_LAYER_OF_2 = true;
-const TRANSPARIFY_SEARCH_RANGE_ENDS = false;
 
 export default makeScene2D(function* (view) {
 	const random = useRandom(2);
+
+	const test = useScene().variables.get('test', null);
 
 	view.offset([0.3, -0.05]);
 
 	const pmerge_me = new PMergeMeAnimator(view, random);
 	yield* waitFor(0.75);
 	yield* pmerge_me.shuffle();
+	// yield* pmerge_me.use_order([3, 2, 4, 0, 1, 7, 6, 5, 8, 9]);
+	// yield* pmerge_me.use_order([9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
 	yield* pmerge_me.sort();
 });
 
@@ -137,6 +141,10 @@ class PMergeMeAnimator {
 
 	*shuffle() {
 		yield* this.root_layer.shuffle();
+	}
+
+	*use_order(order: number[]) {
+		yield* this.root_layer.use_order(order);
 	}
 
 	*sort() {
@@ -271,24 +279,111 @@ class Bar extends Rect {
 	}
 }
 
+interface SearchRangeProps extends Omit<LineProps, 'points'> {
+	layer: number,
+	left_bar: SignalValue<Bar>,
+	right_bar: SignalValue<Bar>,
+}
+
+class SearchRange extends Line {
+	@signal()
+	public declare readonly left_bar: SimpleSignal<Bar, this>;
+
+	@signal()
+	public declare readonly right_bar: SimpleSignal<Bar, this>;
+
+	private readonly layer: number;
+
+	constructor(props?: SearchRangeProps) {
+		const layer = props.layer;
+		super({
+			points: () => [
+				[this.left_bar().index() * (BAR_WIDTH + BAR_SPACING) + this.layer * LAYER_OFFSET - 0.5 * BAR_SPACING, 0],
+				[this.left_bar().index() * (BAR_WIDTH + BAR_SPACING) + this.layer * LAYER_OFFSET - 0.5 * BAR_SPACING, SEARCH_RANGE_HEIGHT],
+				[(this.right_bar().index() + 1) * (BAR_WIDTH + BAR_SPACING) + this.layer * LAYER_OFFSET - 0.5 * BAR_SPACING, SEARCH_RANGE_HEIGHT],
+				[(this.right_bar().index() + 1) * (BAR_WIDTH + BAR_SPACING) + this.layer * LAYER_OFFSET - 0.5 * BAR_SPACING, 0],
+			],
+			...props,
+		});
+		this.layer = layer;
+	}
+
+	*tween(seconds: number, new_left_bar: Bar, new_right_bar: Bar, ease: TimingFunction = easeInOutCubic) {
+		const old_left_index = this.left_bar().index();
+		const old_right_index = this.right_bar().index();
+		const new_left_index = new_left_bar.index();
+		const new_right_index = new_right_bar.index();
+
+		yield* tween(seconds, (value) => {
+			this.points([
+				[ease(value, old_left_index, new_left_index) * (BAR_WIDTH + BAR_SPACING) + this.layer * LAYER_OFFSET - 0.5 * BAR_SPACING, 0],
+				[ease(value, old_left_index, new_left_index) * (BAR_WIDTH + BAR_SPACING) + this.layer * LAYER_OFFSET - 0.5 * BAR_SPACING, SEARCH_RANGE_HEIGHT],
+				[(ease(value, old_right_index, new_right_index) + 1) * (BAR_WIDTH + BAR_SPACING) + this.layer * LAYER_OFFSET - 0.5 * BAR_SPACING, SEARCH_RANGE_HEIGHT],
+				[(ease(value, old_right_index, new_right_index) + 1) * (BAR_WIDTH + BAR_SPACING) + this.layer * LAYER_OFFSET - 0.5 * BAR_SPACING, 0],
+			]);
+		}, () => {
+			this.left_bar(new_left_bar);
+			this.right_bar(new_right_bar);
+			this.points(() => [
+				[this.left_bar().index() * (BAR_WIDTH + BAR_SPACING) + this.layer * LAYER_OFFSET - 0.5 * BAR_SPACING, 0],
+				[this.left_bar().index() * (BAR_WIDTH + BAR_SPACING) + this.layer * LAYER_OFFSET - 0.5 * BAR_SPACING, SEARCH_RANGE_HEIGHT],
+				[(this.right_bar().index() + 1) * (BAR_WIDTH + BAR_SPACING) + this.layer * LAYER_OFFSET - 0.5 * BAR_SPACING, SEARCH_RANGE_HEIGHT],
+				[(this.right_bar().index() + 1) * (BAR_WIDTH + BAR_SPACING) + this.layer * LAYER_OFFSET - 0.5 * BAR_SPACING, 0],
+			]);
+		});
+	}
+}
+
 class PMergeMeAnimatorLayer {
 	private pair_num: number;
 	private pair_gap: number;
 	private has_loner: boolean;
 	private pairs: Slice<PairComponent>;
 	private layer: number;
+	private range: SearchRange;
 
 	constructor(private view: View2D, private random: Random, private bars: Slice<Bar>, private parent: null | PMergeMeAnimatorLayer = null) {
 		this.pair_num = Math.floor(bars.length / 2);
 		this.pair_gap = Math.ceil(bars.length / 2);
 		this.has_loner = bars.length % 2 == 1;
 		this.layer = (this.parent?.layer ?? -1) + 1;
+		const range = createRef<SearchRange>();
+		this.view.add(<SearchRange ref={range} layer={this.layer} left_bar={bars[0]} right_bar={bars[0]} />);
+		this.range = range();
 	}
 
 	*shuffle() {
 		for (let len = this.bars.length; len > 0; len--) {
 			const i = this.random.nextInt(0, len);
 			this.bars.move(i, this.bars.length - 1);
+		}
+
+		yield* all(...this.bars.map((bar, i) => bar.index(i, 0.75)));
+	}
+
+	*use_order(order: number[]) {
+		if (order.length !== this.bars.length) {
+			throw new RangeError();
+		}
+		const sorted = order.slice().sort();
+		if (sorted[0] !== 0) {
+			throw new RangeError();
+		}
+		for (let i = 0; i < order.length - 1; i++) {
+			if (sorted[i] !== sorted[i + 1] - 1) {
+				throw new RangeError();
+			}
+		}
+
+		for (let i = 0; i < order.length; i++) {
+			const original_index = order[i];
+			let index = original_index;
+			for (let j = 0; j < i; j++) {
+				if (original_index > order[j]) {
+					index--;
+				}
+			}
+			this.bars.move(index, this.bars.length - 1);
 		}
 
 		yield* all(...this.bars.map((bar, i) => bar.index(i, 0.75)));
@@ -443,6 +538,8 @@ class PMergeMeAnimatorLayer {
 			yield* all(bar.layerOffset(bar.layerOffset() + 1, 2), ...this.move(0, this.pair_gap - 1), pair.lineWidth(0, 2));
 			to_sort--;
 		}
+		this.range.left_bar(this.bars[0]);
+		this.range.right_bar(this.bars[0]);
 		const left_over = this.has_loner ? 1 : 0;
 		const jacob = new JacobsthalSequence();
 		while (to_sort > left_over) {
@@ -452,16 +549,14 @@ class PMergeMeAnimatorLayer {
 			for (let i = group_size - 1; i >= 0; i--) {
 				const bar = this.bars[i];
 				const search_range = this.bars.slice(to_sort, to_sort + search_size);
-				if (TRANSPARIFY_SEARCH_RANGE_ENDS) {
-					yield* all(
-						...this.bars.map((bar) => bar.opacity(1, 1)),
-						search_range[0].opacity(0.5, 2),
-						search_range[search_range.length - 1].opacity(0.5, 2)
-					);
-				}
+				yield* all(
+					this.range.tween(2, search_range[0], search_range[search_range.length - 1]),
+					this.range.stroke('white', 2),
+					this.range.lineWidth(4, 2),
+				);
 				const insertion_index = binarySearch(search_range, bar, Bar.cmp);
 				const pair = this.getPair(i);
-				if (insertion_index === search_range.length - 1) {
+				if (insertion_index === search_range.length) {
 					search_size--;
 				}
 				yield* all(bar.layerOffset(bar.layerOffset() + 1, 2), ...this.move(i, to_sort + insertion_index - 1), pair.lineWidth(0, 2));
@@ -471,21 +566,18 @@ class PMergeMeAnimatorLayer {
 		if (this.has_loner) {
 			const loner = this.bars[0];
 			const search_range = this.bars.slice(to_sort);
-
-			if (TRANSPARIFY_SEARCH_RANGE_ENDS) {
-				yield* all(
-					...this.bars.map((bar) => bar.opacity(1, 1)),
-					search_range[0].opacity(0.5, 2),
-					search_range[search_range.length - 1].opacity(0.5, 2)
-				);
-			}
+			yield* all(
+				this.range.tween(2, search_range[0], search_range[search_range.length - 1]),
+				this.range.stroke('white', 2),
+				this.range.lineWidth(4, 2),
+			);
 
 			const insertion_index = binarySearch(search_range, loner, Bar.cmp);
 			// NOTE: the loner, by definition, does not have a pair
 			yield* all(loner.lineWidth(0, 2), loner.layerOffset(loner.layerOffset() + 1, 2), ...this.move(0, to_sort + insertion_index - 1));
 			to_sort--;
 		}
-		yield *all(...this.bars.map((bar) => all(bar.layerOffset(bar.layerOffset() - 1, 1), bar.opacity(1, 1))));
+		yield *all(...this.bars.map((bar) => bar.layerOffset(bar.layerOffset() - 1, 1)), this.range.lineWidth(0, 1));
 	}
 }
 
