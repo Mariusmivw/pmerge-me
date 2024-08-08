@@ -1,8 +1,8 @@
-import {initial, Line, LineProps, makeScene2D, Node, NodeProps, Rect, RectProps, signal, Txt, View2D} from '@motion-canvas/2d';
-import {all, createRef, createRefArray, easeInCubic, easeInOutCubic, noop, Origin, Random, SignalValue, SimpleSignal, ThreadGenerator, TimingFunction, tween, useRandom, useScene, waitFor} from '@motion-canvas/core';
+import {initial, Layout, Line, LineProps, makeScene2D, Node, NodeProps, Rect, RectProps, signal, Txt, View2D} from '@motion-canvas/2d';
+import {all, createRef, createRefArray, createSignal, easeInCubic, easeInOutCubic, noop, Origin, Random, Reference, SignalValue, SimpleSignal, SimpleVector2Signal, ThreadGenerator, TimingFunction, tween, useRandom, useScene, Vector2, waitFor} from '@motion-canvas/core';
 import chroma from 'chroma-js';
 
-const BAR_NUM = 10;
+const BAR_NUM = 20;
 const MIN_BAR_HEIGHT = 30;
 const MAX_BAR_HEIGHT = 300;
 const BAR_WIDTH = 50;
@@ -19,10 +19,6 @@ const SEPARATE_LAYER_OF_2 = true;
 
 export default makeScene2D(function* (view) {
 	const random = useRandom(2);
-
-	const test = useScene().variables.get('test', null);
-
-	view.offset([0.3, -0.05]);
 
 	const pmerge_me = new PMergeMeAnimator(view, random);
 	yield* waitFor(0.75);
@@ -115,14 +111,17 @@ function createSlice<T>(arr: T[], from: number = 0, to: number = arr.length): Sl
 class PMergeMeAnimator {
 	private root_layer: PMergeMeAnimatorLayer;
 
-	constructor(private view: View2D, private random: Random) {
+	constructor(private view: View2D, private random: Random, order: number[] = null) {
 		const bars = createRefArray<Bar>();
+	
+		const rect = <Rect position={[-(BAR_WIDTH + BAR_SPACING) * (BAR_NUM - 1) / 2, 100]} />
 		
 		for (let i = 0; i < BAR_NUM; i++) {
 			// const height = MIN_BAR_HEIGHT + BAR_HEIGHT_INCREASE * i;
-			this.view.add(<Bar
+			rect.add(<Bar
 				ref={bars}
 				index={i}
+				// value={i === 11 ? 15.5 : i}
 				value={i}
 				// x={BAR_X_INCREASE * i} y={-height / 2}
 				// width={BAR_WIDTH} height={height}
@@ -135,8 +134,12 @@ class PMergeMeAnimator {
 				)}
 			/>);
 		}
+		this.view.add(rect);
 
-		this.root_layer = new PMergeMeAnimatorLayer(this.view, this.random, createSlice([...bars]));
+		this.root_layer = new PMergeMeAnimatorLayer(rect, this.random, createSlice([...bars]));
+		if (order !== null) {
+			this.root_layer.set_order(order);
+		}
 	}
 
 	*shuffle() {
@@ -144,7 +147,7 @@ class PMergeMeAnimator {
 	}
 
 	*use_order(order: number[]) {
-		yield* this.root_layer.use_order(order);
+		yield* this.root_layer.set_order(order);
 	}
 
 	*sort() {
@@ -271,7 +274,7 @@ class Bar extends Rect {
 			...props
 		});
 		const fontSize = 20;
-		this.add(<Txt text={() => this.value().toFixed(0)} fill={'#EEE'} fontSize={fontSize} y={() => -this.getOriginDelta(Origin.Middle).y + fontSize} />)
+		this.add(<Txt fill={'#EEE'} fontSize={fontSize} y={() => -this.getOriginDelta(Origin.Middle).y + fontSize}>{this.value().toString()}</Txt>)
 	}
 
 	static cmp(a: Bar, b: Bar) {
@@ -334,6 +337,176 @@ class SearchRange extends Line {
 	}
 }
 
+class AnimatedJacobsthalSequence {
+	private power_of_2: number;
+	private n: number;
+
+	private p2_txt: Reference<Txt>;
+	private p2_value_txt: Reference<Txt>;
+	private p2_new_value_txt: Reference<Txt>;
+
+	private n_txt: Reference<Txt>;
+	private n_value_txt: Reference<Txt>;
+
+	private minus_left_txt: Reference<Txt>;
+	private minus_left_invis_txt: Reference<Txt>;
+	private minus_left_moving_txt: Reference<Txt>;
+	private minus_txt: Reference<Txt>;
+	private minus_right_txt: Reference<Txt>;
+	private minus_right_invis_txt: Reference<Txt>;
+	private minus_right_moving_txt: Reference<Txt>;
+	private minus_equals_txt: Reference<Txt>;
+	private minus_equals_value_txt: Reference<Txt>;
+
+	private self: Reference<Node>;
+
+	/**
+	 * @param [start_value=2] First value in the sequence (use 1 for index sequence, use 2 for the groupsize sequence)
+	 */
+	constructor(private readonly container: Node, private readonly start_value: number = 2) {
+		this.power_of_2 = start_value;
+		this.n = 0;
+
+		this.p2_txt = createRef<Txt>();
+		this.p2_value_txt = createRef<Txt>();
+		this.p2_new_value_txt = createRef<Txt>();
+
+		this.n_txt = createRef<Txt>();
+		this.n_value_txt = createRef<Txt>();
+
+		this.minus_left_txt = createRef<Txt>();
+		this.minus_left_invis_txt = createRef<Txt>();
+		this.minus_left_moving_txt = createRef<Txt>();
+		this.minus_txt = createRef<Txt>();
+		this.minus_right_txt = createRef<Txt>();
+		this.minus_right_invis_txt = createRef<Txt>();
+		this.minus_right_moving_txt = createRef<Txt>();
+		this.minus_equals_txt = createRef<Txt>();
+		this.minus_equals_value_txt = createRef<Txt>();
+
+		this.self = createRef<Node>();
+		const fill = '#DDD';
+		this.container.add(
+			<Node ref={this.self} opacity={0}>
+				<Txt fill={fill}>
+					<Txt ref={this.p2_txt}>Power of 2: {'\u200b'}</Txt>{'\n'}
+					<Txt ref={this.n_txt}>N: {'\u200b'}</Txt>{'\n'}
+					<Txt ref={this.minus_left_txt} opacity={0}>{this.power_of_2.toFixed(0)} {'\u200b'}</Txt>
+				</Txt>
+
+				<Txt fill={fill} ref={this.p2_value_txt} left={this.p2_txt().right}></Txt>
+				<Txt fill={fill} ref={this.p2_new_value_txt} left={this.p2_value_txt().right} opacity={0}/>
+
+				<Txt fill={fill} ref={this.n_value_txt} left={this.n_txt().right}>{this.n.toFixed(0)} {'\u200b'}</Txt>
+
+				<Txt fill={fill} ref={this.minus_left_moving_txt} opacity={0}></Txt>
+				<Txt fill={fill} ref={this.minus_left_invis_txt} left={this.minus_left_txt().left} opacity={0}></Txt>
+				<Txt fill={fill} ref={this.minus_txt} left={this.minus_left_txt().right}>- {'\u200b'}</Txt>
+				<Txt fill={fill} ref={this.minus_right_txt} left={this.minus_txt().right} opacity={0}>{this.n_value_txt().text()}</Txt>
+				<Txt fill={fill} ref={this.minus_right_moving_txt} left={this.minus_txt().right} opacity={0}></Txt>
+				<Txt fill={fill} ref={this.minus_right_invis_txt} left={this.minus_right_txt().left} opacity={0}></Txt>
+				<Txt fill={fill} ref={this.minus_equals_txt} left={this.minus_right_txt().right}>= {'\u200b'}</Txt>
+				<Txt fill={fill} ref={this.minus_equals_value_txt} left={this.minus_equals_txt().right} opacity={0}></Txt>
+			</Node>
+		);
+	}
+
+	next() {
+		this.n = this.power_of_2 - this.n;
+		this.power_of_2 *= 2;
+		return this.n;
+	}
+
+	*animate_next() {
+		if (this.self().opacity() === 0) {
+			yield* this.self().opacity(1, 1);
+		}
+
+		// Slide in new power of 2
+		{
+			this.p2_new_value_txt().text((this.power_of_2).toFixed(0) + ' \u200b');
+			yield* all(
+				this.p2_new_value_txt().opacity(1, 0.75),
+				this.p2_value_txt().opacity(0, 0.75),
+				this.p2_value_txt().right(this.p2_txt().right, 0.75),
+			);
+			this.p2_value_txt().text(this.p2_new_value_txt().text());
+			this.p2_value_txt().left(this.p2_txt().right),
+			this.p2_value_txt().opacity(1);
+			this.p2_new_value_txt().opacity(0);
+			yield* waitFor(0.5);
+		}
+
+		// Slide left value in
+		{
+			this.minus_left_moving_txt().left(this.p2_value_txt().left);
+			this.minus_left_moving_txt().text(this.p2_value_txt().text());
+			this.minus_left_moving_txt().opacity(1);
+			this.minus_left_invis_txt().text(this.minus_left_moving_txt().text());
+			const seconds = 0.75;
+			yield* all(
+				this.minus_left_txt().opacity(0, seconds),
+				this.minus_left_moving_txt().left(this.minus_left_txt().left, seconds),
+				this.minus_txt().left(this.minus_left_invis_txt().right, seconds),
+			);
+			this.minus_left_txt().text(this.minus_left_invis_txt().text());
+			this.minus_left_txt().opacity(1);
+			this.minus_left_moving_txt().opacity(0);
+			this.minus_txt().left(this.minus_left_txt().right);
+		}
+
+		// Slide right value in
+		{
+			this.minus_right_moving_txt().left(this.n_value_txt().left);
+			this.minus_right_moving_txt().text(this.n_value_txt().text());
+			this.minus_right_moving_txt().opacity(1);
+			this.minus_right_invis_txt().text(this.minus_right_moving_txt().text());
+			const seconds = 0.75;
+			yield* all(
+				this.minus_right_txt().opacity(0, seconds),
+				this.minus_right_moving_txt().left(this.minus_right_txt().left, seconds),
+				this.minus_equals_txt().left(this.minus_right_invis_txt().right, seconds),
+			);
+			this.minus_right_txt().text(this.minus_right_invis_txt().text());
+			this.minus_right_txt().opacity(1);
+			this.minus_right_moving_txt().opacity(0);
+			this.minus_equals_txt().left(this.minus_right_txt().right);
+		}
+
+		// Create answer and move in
+		{
+			this.minus_equals_value_txt().text((this.power_of_2 - this.n).toFixed(0) + ' \u200b');
+			const seconds = 0.75;
+			yield* all(
+				this.minus_equals_value_txt().opacity(1, seconds),
+			);
+
+			yield* waitFor(0.25);
+			const seconds2 = 0.75;
+			yield* all(
+				this.n_value_txt().opacity(0, seconds2),
+				this.n_value_txt().right(this.n_txt().right, seconds2),
+				this.minus_equals_value_txt().left(this.n_txt().right, seconds2),
+			);
+			this.n_value_txt().text(this.minus_equals_value_txt().text());
+			this.n_value_txt().left(this.n_txt().right);
+			this.n_value_txt().opacity(1);
+			this.minus_equals_value_txt().opacity(0);
+			this.minus_equals_value_txt().left(this.minus_equals_txt().right);
+		}
+	}
+
+	*remove(seconds: number) {
+		yield* this.self().opacity(0, seconds);
+		this.reset();
+	}
+
+	reset() {
+		this.power_of_2 = this.start_value;
+		this.n = 0;
+	}
+}
+
 class PMergeMeAnimatorLayer {
 	private pair_num: number;
 	private pair_gap: number;
@@ -341,15 +514,19 @@ class PMergeMeAnimatorLayer {
 	private pairs: Slice<PairComponent>;
 	private layer: number;
 	private range: SearchRange;
+	private jacob: AnimatedJacobsthalSequence;
 
-	constructor(private view: View2D, private random: Random, private bars: Slice<Bar>, private parent: null | PMergeMeAnimatorLayer = null) {
+	constructor(private container: Node, private random: Random, private bars: Slice<Bar>, private parent: null | PMergeMeAnimatorLayer = null) {
 		this.pair_num = Math.floor(bars.length / 2);
 		this.pair_gap = Math.ceil(bars.length / 2);
 		this.has_loner = bars.length % 2 == 1;
 		this.layer = (this.parent?.layer ?? -1) + 1;
 		const range = createRef<SearchRange>();
-		this.view.add(<SearchRange ref={range} layer={this.layer} left_bar={bars[0]} right_bar={bars[0]} />);
+		this.container.add(<SearchRange ref={range} layer={this.layer} left_bar={bars[0]} right_bar={bars[0]} />);
 		this.range = range();
+		const jacob_container = createRef<Layout>();
+		this.container.add(<Layout ref={jacob_container} y={-450} x={100}/>);
+		this.jacob = new AnimatedJacobsthalSequence(jacob_container());
 	}
 
 	*shuffle() {
@@ -361,7 +538,7 @@ class PMergeMeAnimatorLayer {
 		yield* all(...this.bars.map((bar, i) => bar.index(i, 0.75)));
 	}
 
-	*use_order(order: number[]) {
+	*set_order(order: number[]) {
 		if (order.length !== this.bars.length) {
 			throw new RangeError();
 		}
@@ -399,7 +576,7 @@ class PMergeMeAnimatorLayer {
 	*createPairs() {
 		const pairs = createRefArray<PairComponent>();
 		for (let i = 0; i < this.pair_num; i++) {
-			this.view.add(<PairComponent
+			this.container.add(<PairComponent
 				ref={pairs}
 				left_bar={this.bars[i]}
 				right_bar={this.bars[i + this.pair_gap]}
@@ -511,7 +688,7 @@ class PMergeMeAnimatorLayer {
 				...this.pairs.map((pair) => pair.stroke('gray', 1)),
 			);
 
-			const child = new PMergeMeAnimatorLayer(this.view, this.random, sub_bars, this);
+			const child = new PMergeMeAnimatorLayer(this.container, this.random, sub_bars, this);
 			yield* child.sort();
 
 			yield* all(
@@ -541,25 +718,65 @@ class PMergeMeAnimatorLayer {
 		this.range.left_bar(this.bars[0]);
 		this.range.right_bar(this.bars[0]);
 		const left_over = this.has_loner ? 1 : 0;
-		const jacob = new JacobsthalSequence();
+		this.jacob.reset();
+		const group_rect = createRef<Rect>();
+		this.container.add(<Rect
+			ref={group_rect}
+			zIndex={-1}
+			fill={'#252'}
+			offset={[-1, 1]}
+			x={-(BAR_WIDTH + BAR_SPACING) / 2 + (BAR_WIDTH + BAR_SPACING) * this.bars.offset() + LAYER_OFFSET * this.layer}
+			y={BAR_SPACING / 2}
+			width={0}
+			height={MAX_BAR_HEIGHT + BAR_SPACING}
+		/>);
 		while (to_sort > left_over) {
-			const group_size = Math.min(jacob.next(), to_sort - left_over);
+			yield* this.jacob.animate_next();
+			const next_jacob = this.jacob.next();
+			const group_size = Math.min(next_jacob, to_sort - left_over);
+
+			yield* group_rect().width((BAR_WIDTH + BAR_SPACING) * group_size, 2);
+
 			const unsorted_after_group = to_sort - left_over - group_size;
-			let search_size = this.bars.length - to_sort - unsorted_after_group - 1; // TODO: check for off-by-one error
+			let search_size = this.bars.length - to_sort - unsorted_after_group - 1;
+			const inserted_indices: number[] = [];
 			for (let i = group_size - 1; i >= 0; i--) {
+				let search_end = to_sort + search_size;
+				for (let j = inserted_indices.length - 1; j >= 0; j--) {
+					if (inserted_indices[j] === search_end) {
+						inserted_indices.splice(j, 1);
+						search_size--;
+						search_end--;
+					}
+					else {
+						break;
+					}
+				}
 				const bar = this.bars[i];
-				const search_range = this.bars.slice(to_sort, to_sort + search_size);
+				const search_range = this.bars.slice(to_sort, search_end);
 				yield* all(
 					this.range.tween(2, search_range[0], search_range[search_range.length - 1]),
 					this.range.stroke('white', 2),
 					this.range.lineWidth(4, 2),
 				);
 				const insertion_index = binarySearch(search_range, bar, Bar.cmp);
-				const pair = this.getPair(i);
-				if (insertion_index === search_range.length) {
-					search_size--;
+
+				// Update inserted_indices
+				{
+					const v = to_sort + insertion_index - 1;
+					const a = binarySearch(createSlice(inserted_indices), v, basic_cmp);
+					for (let j = 0; j < a; j++) {
+						inserted_indices[j]--;
+					}
+					inserted_indices.splice(a, 0, v);
 				}
-				yield* all(bar.layerOffset(bar.layerOffset() + 1, 2), ...this.move(i, to_sort + insertion_index - 1), pair.lineWidth(0, 2));
+
+				const pair = this.getPair(i);
+				yield* all(
+					bar.layerOffset(bar.layerOffset() + 1, 2),
+					group_rect().width((BAR_WIDTH + BAR_SPACING) * i, 2),
+					...this.move(i, to_sort + insertion_index - 1), pair.lineWidth(0, 2)
+				);
 				to_sort--;
 			}
 		}
@@ -577,7 +794,7 @@ class PMergeMeAnimatorLayer {
 			yield* all(loner.lineWidth(0, 2), loner.layerOffset(loner.layerOffset() + 1, 2), ...this.move(0, to_sort + insertion_index - 1));
 			to_sort--;
 		}
-		yield *all(...this.bars.map((bar) => bar.layerOffset(bar.layerOffset() - 1, 1)), this.range.lineWidth(0, 1));
+		yield *all(...this.bars.map((bar) => bar.layerOffset(bar.layerOffset() - 1, 1)), this.range.lineWidth(0, 1), this.jacob.remove(1));
 	}
 }
 
@@ -597,13 +814,26 @@ function basic_cmp<T>(a: T, b: T) {
 	return Eq.GREAT;
 }
 
+function inverse<T>(cmp: (a: T, b: T) => Eq) {
+	return (a: T, b: T) => {
+		const r = cmp(a, b);
+		if (r === Eq.EQUAL) {
+			return Eq.EQUAL;
+		}
+		if (r === Eq.LESS) {
+			return Eq.GREAT;
+		}
+		return Eq.LESS;
+	}
+}
+
 function binarySearch<T>(arr: Slice<T>, value: T, cmp: (a: T, b: T) => Eq = basic_cmp<T>) {
 	let start = 0;
 	let end = arr.length;
 	while (start != end) {
 		const mid = Math.floor((start + end) / 2);
 		const eq = cmp(arr[mid], value);
-		if (eq == Eq.EQUAL) {
+		if (eq === Eq.EQUAL) {
 			return mid + 1;
 		}
 		if (eq === Eq.GREAT) {
@@ -615,96 +845,6 @@ function binarySearch<T>(arr: Slice<T>, value: T, cmp: (a: T, b: T) => Eq = basi
 	}
 	return end;
 }
-
-/*
-	search for: 2
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	 s             m               e
-
-	1 =?= 2 => LESS
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	                 s     m       e
-	
-	2 =?= 2 => EQUAL
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	                         s m   e
-	
-	4 =?= 2 => GREAT
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	                         s e
-							 m
-	
-	2 =?= 2 => EQUAL
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	                           s
-							   e
-							   m
-
-
-
-	search for: 3
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	 s             m               e
-
-	1 =?= 3 => LESS
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	                 s     m       e
-	
-	2 =?= 3 => LESS
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	                         s m   e
-	
-	4 =?= 3 => GREAT
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	                         s e
-							 m
-	
-	2 =?= 3 => LESS
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	                           s
-							   e
-							   m
-
-
-
-	search for: 1
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	 s             m               e
-
-	1 =?= 1 => EQUAL
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	                 s     m       e
-	
-	2 =?= 1 => GREAT
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	                 s m   e
-	
-	2 =?= 1 => GREAT
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	                 s e
-					 m
-	
-	1 =?= 1 => EQUAL
-
-	[0 0 0 0 1 1 1 1 1 2 2 2 2 4 4]
-	                   s
-					   e
-					   m
-*/
 
 function shuffle<T>(arr: T[], random: Random) {
 	for (let len = arr.length; len > 0; len--) {

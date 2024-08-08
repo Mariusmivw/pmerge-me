@@ -1,9 +1,9 @@
 import {makeProject} from '@motion-canvas/core';
 
-import example from './scenes/example?scene';
+import pmerge_me from './scenes/pmerge-me?scene';
 
 export default makeProject({
-  scenes: [example],
+  scenes: [pmerge_me],
   variables: {test: 2},
   experimentalFeatures: true,
   plugins: [],
