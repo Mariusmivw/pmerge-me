@@ -74,7 +74,10 @@ class PMergeMeAnimator {
 
 		const [cmp, cmp_count] = count_cmp(Bar.cmp);
 		this.cmp_count = cmp_count;
-		rect.add(<Txt text={() => cmp_count().toString()}></Txt>);
+
+		// NOTE: comparison count
+		// rect.add(<Txt text={() => cmp_count().toString()}></Txt>);
+
 		this.root_layer = new PMergeMeAnimatorLayer(rect, this.random, createSlice([...bars]), cmp);
 		if (order !== null) {
 			this.root_layer.set_order(order);
